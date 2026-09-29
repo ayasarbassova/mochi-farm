@@ -574,8 +574,9 @@ main::-webkit-scrollbar{display:none}
         <div class="list" id="board"></div>
         <div class="sec-title">Invite a friend</div>
         <p class="sub" style="margin-top:-6px">They get their own little creature. You'll see each other's focus time and homes.</p>
-        <div class="invite"><input id="invite-link" readonly aria-label="Invite link"><button class="btn btn-tinted sm" data-act="copyLink">Copy</button></div>
-        <p class="footnote">Friends shown here are sample data for this prototype.</p>
+        <div class="invite"><input id="invite-link" readonly aria-label="Your invite code"><button class="btn btn-tinted sm" data-act="copyLink">Copy</button></div>
+        <div class="invite" id="invite-add" hidden><input id="friend-code" placeholder="Friend's code" autocapitalize="characters" autocomplete="off" maxlength="12" aria-label="Friend's invite code"><button class="btn btn-primary sm" data-act="addFriend">Add</button></div>
+        <p class="footnote" id="friends-note"></p>
       </div>
     </section>
 
@@ -590,7 +591,7 @@ main::-webkit-scrollbar{display:none}
         <div class="week" id="week"></div>
         <div class="sec-title">Mochi's pantry</div>
         <div class="pantry" id="pantry"></div>
-        <div style="display:flex;justify-content:space-between;align-items:center"><button class="btn btn-plain" data-act="tour">Replay the tour</button><button class="btn btn-plain" data-act="dev">Developer</button><button class="btn btn-plain" data-act="reset" style="color:var(--red)">Reset progress</button></div>
+        <div style="display:flex;justify-content:space-between;align-items:center"><button class="btn btn-plain" data-act="tour">Replay the tour</button><button class="btn btn-plain" data-act="account">Account</button><button class="btn btn-plain" data-act="dev">Developer</button><button class="btn btn-plain" data-act="reset" style="color:var(--red)">Reset progress</button></div>
         <p class="footnote" id="sessions-line"></p>
       </div>
     </section>
@@ -789,7 +790,32 @@ if (S.owned.some(x => LEGACY[x]) || !S.equip) {
   S.equip = S.equip || {};
   S.owned.forEach(id => { if (!S.equip[ITEM[id].cat]) S.equip[ITEM[id].cat] = id; });
 }
-function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+function saveLocal() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+// every real change also goes to the Mochi app, which syncs it to the cloud in the background
+let postTimer;
+function save() {
+  if (window.ReactNativeWebView) S.updatedAt = Date.now();
+  saveLocal();
+  if (!window.ReactNativeWebView) return;
+  clearTimeout(postTimer);
+  postTimer = setTimeout(() => toApp({ type: 'state', state: S, ts: S.updatedAt, profile: { look: myLook(), equip: myEquip(), cozy: cozyScore(S.equip), name: S.name || '' } }), 600);
+}
+function toApp(msg) { try { window.ReactNativeWebView.postMessage(JSON.stringify(msg)); } catch (e) {} }
+const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }));
+const esc = t => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/* ---- real friends and account, supplied by the Mochi app (sample friends otherwise) ---- */
+let BOARD = null, ACCOUNT = null;
+const REAL = () => !!(window.ReactNativeWebView && ACCOUNT);
+function streakOf(daily) { let k = dayKey(); if (!(daily[k] > 0)) k = addDays(k, -1); let n = 0; while (daily[k] > 0) { n++; k = addDays(k, -1); } return n; }
+const myBoardRow = () => (BOARD || []).find(r => r.is_me);
+function friendsNow() {
+  if (!REAL()) return FRIENDS;
+  return (BOARD || []).filter(r => !r.is_me).map(r => {
+    const daily = r.daily || {}, look = { ...DEFAULT_LOOK, ...(r.look || {}) };
+    return { id: r.user_id, name: esc(r.display_name || 'A friend'), pet: esc(r.pet_name || 'Mochi'), look, color: look.color, equip: r.equip || {}, daily, streak: streakOf(daily), real: true };
+  });
+}
 
 /* ================= helpers ================= */
 const $ = s => document.querySelector(s);
@@ -1432,10 +1458,8 @@ function homeScene() {
 }
 function friendsScene() {
   const key = timePal(), p = PAL[key];
-  const crew = [
-    { lk: FRIENDS[2].look, x: 10, y: 208, s: 62 }, { lk: FRIENDS[0].look, x: 66, y: 194, s: 72 },
-    { lk: null, x: 132, y: 172, s: 100, me: true }, { lk: FRIENDS[1].look, x: 226, y: 194, s: 72 }, { lk: FRIENDS[3].look, x: 290, y: 210, s: 60 },
-  ];
+  const fl = friendsNow(), slots = [{ x: 66, y: 194, s: 72 }, { x: 226, y: 194, s: 72 }, { x: 10, y: 208, s: 62 }, { x: 290, y: 210, s: 60 }];
+  const crew = [{ lk: null, x: 132, y: 172, s: 100, me: true }, ...fl.slice(0, 4).map((f, i) => ({ lk: f.look, ...slots[i] }))];
   return `<svg viewBox="0 0 360 300" role="img" aria-label="Mochi and his friends in the meadow">
     ${pimg(landscape(300, 188, p, { seed: 23, sun: [60, 66], moon: key === 'night' }) + sakuraTree(338, 254, 1.15) + fence(0, 150, 236, p), [0, 0, 360, 300])}
     ${key === 'night' ? '' : cloudImg(230, 70, .8, p, '')}
@@ -1581,6 +1605,7 @@ function challengeInfo() {
   return { days, failed: days.some(d => d.past && !d.done), complete: days.every(d => d.done) };
 }
 function friendMin(fr, k) {
+  if (fr.daily) return fr.daily[k] || 0;
   if (k > dayKey()) return 0;
   let m = fr.base * (0.55 + hash(fr.id + k) * 0.9);
   if (k === dayKey()) { const d = new Date(); m *= clamp((d.getHours() + d.getMinutes() / 60 - 7) / 14, 0.08, 1); }
@@ -1606,7 +1631,7 @@ function challengeHTML(full) {
   }
   let racers = '';
   if (full) {
-    const fr = (S.challenge.friends || []).map(id => FRIENDS.find(x => x.id === id)).filter(Boolean);
+    const fr = (S.challenge.friends || []).map(id => friendsNow().find(x => x.id === id)).filter(Boolean);
     racers = `<div class="racers">
       <div class="racer"><span class="av">${mochiSVG({ mood: 'idle', u: 'rcme' })}</span><span>You &amp; Mochi</span><span class="dots">${dotsFor(k => S.daily[k] || 0, S.challenge.start)}</span></div>
       ${fr.map(x => `<div class="racer"><span class="av">${mochiSVG({ mood: 'idle', look: x.look, u: 'rc' + x.id })}</span><span>${x.name} &amp; ${x.pet}</span><span class="dots">${dotsFor(k => friendMin(x, k), S.challenge.start)}</span></div>`).join('')}
@@ -1691,15 +1716,25 @@ function renderFriends() {
   $('#board-seg').style.setProperty('--i', boardMode === 'focus' ? 0 : 1);
   $('#board-seg').querySelectorAll('button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.arg === boardMode)));
   const k = dayKey(), cozy = boardMode === 'cozy';
-  const me = { id: 'me', streak: streak(), m: todayMin(), score: cozyScore(S.equip) };
-  const list = [me, ...FRIENDS.map(x => ({ ...x, m: friendMin(x, k), score: cozyScore(x.equip) }))].sort((a, b) => cozy ? b.score - a.score : b.m - a.m);
+  // with real friends, everyone's minutes (yours too) come from server-timed sessions, so the race is fair
+  const mine = REAL() && myBoardRow() ? myBoardRow().daily || {} : null;
+  const me = { id: 'me', streak: mine ? streakOf(mine) : streak(), m: mine ? mine[k] || 0 : todayMin(), score: cozyScore(S.equip) };
+  const list = [me, ...friendsNow().map(x => ({ ...x, m: friendMin(x, k), score: cozyScore(x.equip) }))].sort((a, b) => cozy ? b.score - a.score : b.m - a.m);
   const inCh = new Set(S.challenge ? S.challenge.friends : []);
   const val = x => cozy ? `${x.score}` : fmtMin(x.m);
   $('#board').innerHTML = list.map((x, i) => x.id === 'me'
     ? `<div class="row me"><span class="rank">${i + 1}</span><span class="av">${mochiSVG({ mood: 'happy', u: 'bdme' })}</span><span class="who"><b>Mochi (you)</b><span>${cozy ? 'Your home' : `${x.streak}-day streak`}</span></span><span class="mins">${val(x)}</span><span></span></div>`
     : `<button class="row" data-act="visit" data-arg="${x.id}"><span class="rank">${i + 1}</span><span class="av">${mochiSVG({ mood: 'idle', look: x.look, u: 'bd' + x.id })}</span><span class="who"><b>${x.pet}</b><span>${x.name} · ${cozy ? 'tap to visit' : `${x.streak}-day streak`}${inCh.has(x.id) ? ' · in your harvest' : ''}</span></span><span class="mins">${val(x)}</span>${CHEV}</button>`
   ).join('');
-  $('#invite-link').value = `https://mochi.farm/join/${S.code}`;
+  renderInvite();
+}
+function renderInvite() {
+  const real = REAL(), code = real && ACCOUNT.inviteCode;
+  $('#invite-link').value = code || `https://mochi.farm/join/${S.code}`;
+  $('#invite-add').hidden = !real;
+  $('#friends-note').textContent = real
+    ? (friendsNow().length ? 'Minutes count only for full sessions, timed by the server.' : 'No friends yet. Send them your code, or add theirs above.')
+    : 'Friends shown here are sample data. Open Mochi Farm in the app to add real friends.';
 }
 function renderProgress() {
   setHTML($('#progress-scene'), progressScene());
@@ -1746,7 +1781,28 @@ let scene = null, timer = null, brk = null, wake = null, awakeVideo = null;
 const NATIVE = window.ReactNativeWebView;
 let nativeHidden = false;
 const isHidden = () => document.hidden || nativeHidden;
-window.mochiNative = { setHidden(h) { if (nativeHidden === h) return; nativeHidden = h; onVisibility(); } };
+const toAppIf = msg => { if (NATIVE) toApp(msg); };
+const pendingReq = new Map();
+function ask(type, data) {
+  return new Promise(res => {
+    const req = uuid(); pendingReq.set(req, res);
+    toApp({ type, req, ...data });
+    setTimeout(() => { if (pendingReq.delete(req)) res({ ok: false, error: "Couldn't reach the server. Check your connection." }); }, 20000);
+  });
+}
+window.mochiNative = {
+  setHidden(h) { if (nativeHidden === h) return; nativeHidden = h; onVisibility(); },
+  // the cloud copy is newer (a new phone, or signing in): it replaces this one
+  loadState(state, ts) {
+    if (S.active) return;
+    const code = S.code;
+    S = Object.assign(fresh(), state || {}); S.active = null; S.updatedAt = ts; S.code = S.code || code;
+    saveLocal(); closeModal(); if (wd) closeWardrobe(); $('#scr-reward').hidden = true; render();
+  },
+  setBoard(rows) { BOARD = Array.isArray(rows) ? rows : null; if (tab === 'friends' || tab === 'focus') render(); },
+  setAccount(acc) { ACCOUNT = acc; if (tab === 'friends' || tab === 'progress') render(); },
+  reply(req, ok, error) { const r = pendingReq.get(req); if (r) { pendingReq.delete(req); r({ ok, error }); } },
+};
 async function keepAwake(on) {
   if (NATIVE) { try { NATIVE.postMessage(JSON.stringify({ type: 'awake', on })); } catch (e) {} return; }
   if (!on) {
@@ -1812,7 +1868,8 @@ function warnWorker() {
 function startFocus() {
   const now = Date.now();
   brk = null;
-  S.active = { min: S.selected, startedAt: now, endsAt: now + S.selected * MINUTE(), total: S.selected * MINUTE(), lastSeen: now };
+  S.active = { id: uuid(), min: S.selected, startedAt: now, endsAt: now + S.selected * MINUTE(), total: S.selected * MINUTE(), lastSeen: now };
+  if (window.ReactNativeWebView && !(DEMO || S.fast)) toApp({ type: 'session', op: 'start', id: S.active.id, minutes: S.active.min, day: dayKey() });
   save(); fx('start'); fullscreen(true); showActive();
 }
 // the painting ends right where the glass panel begins, so the farm plot (and Mochi) always sits above it
@@ -1879,7 +1936,7 @@ function tick() {
   }
   const left = a.endsAt - now;
   if (left <= 0) return completeSession();
-  a.lastSeen = now; save();
+  a.lastSeen = now; saveLocal();
   const p = 1 - left / (a.total || a.min * 60000);
   const t = TASKS[a.min], n = t.count;
   $('#act-time').textContent = fmtClock(left);
@@ -1915,6 +1972,7 @@ function endBreak(finished) {
 function completeSession() {
   const a = S.active; if (!a) return;
   const t = TASKS[a.min], k = dayKey(), before = challengeInfo(), coinsBefore = S.coins;
+  if (a.id) toAppIf({ type: 'session', op: 'finish', id: a.id });
   S.active = null;
   S.coins += t.coins; S.totalMin += a.min; S.sessions += 1;
   S.daily[k] = (S.daily[k] || 0) + a.min;
@@ -1934,6 +1992,7 @@ function completeSession() {
 }
 function abandon(reason) {
   const t = S.active ? TASKS[S.active.min] : TASKS[25];
+  if (S.active && S.active.id) toAppIf({ type: 'session', op: 'abandon', id: S.active.id });
   S.active = null; save(); closeOverlay(); fx('sad');
   showReward({ ok: false, reason, t });
 }
@@ -2182,6 +2241,18 @@ function endTour() {
   save(); $('#main').scrollTo({ top: 0, behavior: 'smooth' }); render();
 }
 
+/* ================= account: add an email / sign in with a 6-digit code ================= */
+function emailFlow(mode, sentTo) {
+  const link = mode === 'link';
+  openModal(`<h3>${link ? 'Add your email' : 'Sign in'}</h3>
+    <p class="sub">${sentTo ? `We sent a code to <b>${esc(sentTo)}</b>. Enter it below.` : link ? 'We will email you a code. Your guest progress stays exactly as it is.' : 'We will email you a code. Signing in replaces the progress on this phone with your account.'}</p>
+    <div class="invite"><input id="acct-email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" value="${esc(sentTo || '')}" ${sentTo ? 'readonly' : ''} aria-label="Email"></div>
+    ${sentTo ? '<div class="invite"><input id="acct-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="Code" aria-label="Code from the email"></div>' : ''}
+    <button class="btn btn-primary wide" data-act="${sentTo ? 'acctVerify' : 'acctSend'}" data-arg="${mode}">${sentTo ? (link ? 'Add email' : 'Sign in') : 'Send code'}</button>
+    <button class="btn btn-plain" data-act="account">Back</button>`);
+  setTimeout(() => { const i = $(sentTo ? '#acct-code' : '#acct-email'); if (i) i.focus(); }, 300);
+}
+
 /* ================= modal & toast ================= */
 // download links only work when the page is opened directly, not inside an embedded viewer
 let standalone = false; try { standalone = window.top === window; } catch (e) {}
@@ -2228,7 +2299,7 @@ const ACTIONS = {
   copyLink: () => { fx('tap'); copyText($('#invite-link').value, $('#invite-link')); },
   startCh: () => { fx('start'); startChallenge(); },
   visit: id => {
-    const fr = FRIENDS.find(x => x.id === id); if (!fr) return;
+    const fr = friendsNow().find(x => x.id === id); if (!fr) return;
     fx('tap');
     const inCh = S.challenge && S.challenge.friends.includes(id) && !challengeInfo().failed && !challengeInfo().complete;
     const theirs = cozyScore(fr.equip), mine = cozyScore(S.equip), top = Math.max(theirs, mine, 1);
@@ -2240,7 +2311,7 @@ const ACTIONS = {
       <div class="row2">${inCh ? '<button class="btn btn-tinted" disabled>In your harvest ✓</button>' : `<button class="btn btn-primary" data-act="challenge" data-arg="${fr.id}">Challenge ${fr.name}</button>`}<button class="btn btn-gray" data-act="closeModal">Close</button></div>`);
   },
   challenge: id => {
-    const fr = FRIENDS.find(x => x.id === id); if (!fr) return;
+    const fr = friendsNow().find(x => x.id === id); if (!fr) return;
     const c = challengeInfo();
     if (!c || c.failed || c.complete) S.challenge = { start: dayKey(), friends: [], claimed: false };
     if (!S.challenge.friends.includes(id)) S.challenge.friends.push(id);
@@ -2248,7 +2319,7 @@ const ACTIONS = {
   },
   reset: () => openModal(`<h3>Reset all progress?</h3><p class="sub">This clears coins, focus history and Mochi's furniture on this device.</p>
     <div class="row2"><button class="btn btn-gray" data-act="closeModal">Cancel</button><button class="btn" data-act="confirmReset" style="background:var(--red);color:#fff">Reset</button></div>`),
-  confirmReset: () => { const code = S.code, sound = S.sound; S = fresh(); S.code = code; S.sound = sound; save(); closeModal(); go('focus'); toast('Fresh start'); setTimeout(startTour, 400); },
+  confirmReset: () => { const code = S.code, sound = S.sound, name = S.name; S = fresh(); S.code = code; S.sound = sound; S.name = name; save(); closeModal(); go('focus'); toast('Fresh start'); setTimeout(startTour, 400); },
   closeModal: () => closeModal(),
   // tapping the wish (thought bubble or the row) opens a quick-buy card for exactly that item
   wish: () => {
@@ -2285,6 +2356,41 @@ const ACTIONS = {
       $('#main').scrollTo({ top: sh.getBoundingClientRect().top - $('#main').getBoundingClientRect().top + $('#main').scrollTop - 160, behavior: 'smooth' });
       sh.scrollTo({ left: item.offsetLeft - 20, behavior: 'smooth' });
     });
+  },
+  addFriend: async () => {
+    const inp = $('#friend-code'), code = inp.value.trim();
+    if (!code) return inp.focus();
+    fx('tap');
+    const r = await ask('friend:add', { code });
+    if (r.ok) { inp.value = ''; fx('buy'); toast('Friend added'); } else toast(r.error || "Couldn't add that friend");
+  },
+  account: () => {
+    fx('tap');
+    if (!REAL()) return openModal(`<h3>Account</h3><p class="sub">Accounts, cloud saves and real friends work in the Mochi Farm app. Here, progress is saved on this device only.</p><button class="btn btn-gray wide" data-act="closeModal">OK</button>`);
+    const guest = ACCOUNT.isGuest;
+    openModal(`<h3>Account</h3>
+      <p class="sub">${guest ? 'You are playing as a guest. Your progress is backed up, but only this phone can get it back. Add your email to keep it on any phone.' : `Signed in as <b>${esc(ACCOUNT.email)}</b>. Your progress is saved to your account.`}</p>
+      <div class="invite"><input id="acct-name" maxlength="40" placeholder="Your name" value="${esc(S.name || '')}" aria-label="Your name, shown to friends"><button class="btn btn-tinted sm" data-act="saveName">Save</button></div>
+      <p class="footnote">Friends see this name next to your buddy.</p>
+      ${guest ? '<button class="btn btn-primary wide" data-act="acctLink">Add your email</button><button class="btn btn-plain" data-act="acctSignin">I already have an account</button>' : ''}
+      <button class="btn btn-gray wide" data-act="closeModal">Done</button>`);
+  },
+  saveName: () => { S.name = $('#acct-name').value.trim().slice(0, 40); save(); fx('select', 25); toast('Name saved'); },
+  acctLink: () => emailFlow('link'),
+  acctSignin: () => emailFlow('signin'),
+  acctSend: async mode => {
+    const email = $('#acct-email').value.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) return toast('Enter a valid email');
+    const r = await ask(mode === 'link' ? 'account:link' : 'account:signin', { email });
+    if (!r.ok) return toast(r.error || "Couldn't send the code");
+    emailFlow(mode, email);
+  },
+  acctVerify: async mode => {
+    const email = $('#acct-email').value, code = $('#acct-code').value.trim();
+    if (!/^\d{6,10}$/.test(code)) return toast('Enter the code from the email');
+    const r = await ask(mode === 'link' ? 'account:verify' : 'account:signinVerify', { email, code });
+    if (!r.ok) return toast(r.error || 'That code did not work');
+    closeModal(); fx('done'); toast(mode === 'link' ? 'Email added. Your progress is safe.' : 'Signed in. Welcome back!');
   },
   // developer menu: test every feature without sitting through real timers
   dev: () => {
@@ -2329,6 +2435,7 @@ if (S.active) {
   else { delete a.leftAt; showActive(); }
 }
 if (!S.onboarded && !S.active) setTimeout(startTour, 450);
+toAppIf({ type: 'hello', state: S, ts: S.updatedAt || 0 });
 // keep "today" and the sky fresh while the app stays open
 setInterval(() => { if (!S.active && !brk && $('#scr-reward').hidden && tab === 'focus') renderFocus(); }, 60000);
 })();

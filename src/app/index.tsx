@@ -5,6 +5,7 @@ import { AppState, StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
 import { MOCHI_HTML } from '@/mochi/mochi-html';
+import { createMochiSync, type PageMessage } from '@/mochi/sync';
 
 const KEEP_AWAKE_TAG = 'mochi-session';
 
@@ -27,18 +28,23 @@ const HAPTICS: Record<string, () => Promise<void>> = {
  * Mochi Farm runs as a web page inside a WebView. The page and this screen talk to each other:
  * - the page asks us to keep the screen on during a session ({ type: 'awake', on })
  * - we tell the page when the app goes to the background, so leaving still ends the session
+ * - everything else (saves, sessions, friends, account) goes to the sync engine in src/mochi/sync.ts
  */
 export default function MochiScreen() {
   const web = useRef<WebView>(null);
+  const sync = useRef<ReturnType<typeof createMochiSync> | null>(null);
 
   useEffect(() => {
+    sync.current = createMochiSync((js) => web.current?.injectJavaScript(js));
     const sub = AppState.addEventListener('change', (state) => {
       web.current?.injectJavaScript(
         `window.mochiNative && window.mochiNative.setHidden(${state !== 'active'}); true;`
       );
+      if (state === 'active') sync.current?.onActive();
     });
     return () => {
       sub.remove();
+      sync.current?.dispose();
       deactivateKeepAwake(KEEP_AWAKE_TAG);
     };
   }, []);
@@ -54,7 +60,8 @@ export default function MochiScreen() {
       if (msg.on) activateKeepAwake(KEEP_AWAKE_TAG);
       else deactivateKeepAwake(KEEP_AWAKE_TAG);
     }
-    if (msg.type === 'haptic' && msg.name) HAPTICS[msg.name]?.().catch(() => {});
+    else if (msg.type === 'haptic' && msg.name) HAPTICS[msg.name]?.().catch(() => {});
+    else sync.current?.onMessage(msg as PageMessage);
   }
 
   return (
