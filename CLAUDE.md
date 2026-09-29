@@ -8,7 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Node is installed via **nvm**, and non-interactive shells don't load it. Prefix commands with `export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh" &&` or `node`/`npx` will be "command not found".
 - The parent folder `hello world website` contains spaces — always quote paths.
-- `git` does not work (Apple Command Line Tools are broken; fix is `xcode-select --install`). The project is not a git repo.
+- The system `git` is broken (Apple Command Line Tools). Working `git` and `gh` live in a conda env: prefix commands with `export PATH="/opt/anaconda3/envs/gittools/bin:$PATH" &&`. `gh` is logged in as `poliesterr`.
+- This folder is the git repo https://github.com/poliesterr/mochi-farm (public, branch `main`). Commits use the GitHub no-reply email set in the repo-local git config.
 - There is no Xcode or Android Studio; the app is tested on a physical phone via **Expo Go**, so only native modules bundled in Expo Go can be used.
 
 ## Commands
